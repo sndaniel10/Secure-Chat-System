@@ -1,7 +1,11 @@
 import os
+from dotenv import load_dotenv
+
+# Load .env from project root
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # MongoDB
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/hpo_chat")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "hpo_chat")
 
 # JWT

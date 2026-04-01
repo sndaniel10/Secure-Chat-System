@@ -1,4 +1,5 @@
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from pymongo.uri_parser import parse_uri
 from config import MONGODB_URL, DATABASE_NAME
 
 client: AsyncIOMotorClient | None = None
@@ -8,7 +9,10 @@ db: AsyncIOMotorDatabase | None = None
 async def connect_db():
     global client, db
     client = AsyncIOMotorClient(MONGODB_URL)
-    db = client[DATABASE_NAME]
+    # Use database name from URL path if present, otherwise fallback to config
+    parsed = parse_uri(MONGODB_URL)
+    db_name = parsed.get("database") or DATABASE_NAME
+    db = client[db_name]
     # Create indexes
     await db.users.create_index("username", unique=True)
     await db.pre_keys.create_index([("user_id", 1), ("key_id", 1)], unique=True)
