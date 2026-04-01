@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useSession, signOut } from "next-auth/react";
+import { useAuth } from "@/components/providers/auth-provider";
+import { authFetch } from "@/lib/auth-client";
 import { useParams } from "next/navigation";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { NewChatDialog } from "@/components/chat/new-chat-dialog";
@@ -92,11 +93,10 @@ interface ConversationData {
 }
 
 export default function ConversationPage() {
-  const { data: session } = useSession();
+  const { user: session_user, logout } = useAuth();
   const params = useParams();
   const conversationId = params?.conversationId as string;
   const {
-    socket,
     sendMessage,
     joinConversation,
     onMessage,
@@ -120,13 +120,13 @@ export default function ConversationPage() {
   const [hpoEnabled, setHpoEnabled] = useState(true);
   const [isTyping, setIsTyping] = useState(false);
 
-  const currentUserId = session?.user?.id || "";
+  const currentUserId = session_user?.id || "";
 
   // Fetch conversation info
   useEffect(() => {
     async function fetchConversation() {
       try {
-        const res = await fetch("/api/conversations");
+        const res = await authFetch("/api/conversations");
         const data = await res.json();
         const conv = data.conversations?.find(
           (c: ConversationData) => c.id === conversationId
@@ -141,10 +141,10 @@ export default function ConversationPage() {
 
   // Initialize E2EE session
   useEffect(() => {
-    if (!conversation || !session?.user?.id || sessionInitRef.current) return;
+    if (!conversation || !session_user?.id || sessionInitRef.current) return;
 
     // Bind crypto store to current user so each user gets their own IndexedDB
-    initCryptoStore(session.user.id);
+    initCryptoStore(session_user!.id);
 
     async function initE2EE() {
       try {
@@ -171,14 +171,14 @@ export default function ConversationPage() {
 
     sessionInitRef.current = true;
     initE2EE();
-  }, [conversation, session?.user?.id, conversationId]);
+  }, [conversation, session_user?.id, conversationId]);
 
   // Fetch existing messages and decrypt them
   useEffect(() => {
     async function fetchMessages() {
       setLoading(true);
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `/api/conversations/${conversationId}/messages`
         );
         const data = await res.json();
@@ -333,25 +333,13 @@ export default function ConversationPage() {
     return cleanup;
   }, [onHPOPacket, conversationId]);
 
-  // Listen for typing indicators
-  useEffect(() => {
-    if (!socket) return;
-    const handleTyping = (data: { userId: string; conversationId: string }) => {
-      if (data.conversationId === conversationId && data.userId !== currentUserId) {
-        setIsTyping(!!data.userId);
-      }
-    };
-    socket.on("user:typing", handleTyping);
-    socket.on("user:stopTyping", () => setIsTyping(false));
-    return () => {
-      socket.off("user:typing", handleTyping);
-      socket.off("user:stopTyping");
-    };
-  }, [socket, conversationId, currentUserId]);
+  // Typing indicators are now handled server-side via WebSocket broadcast.
+  // The current WebSocket provider doesn't expose raw typing events yet,
+  // so typing indicators are simplified for now.
 
   const handleToggleHPO = useCallback(async (enabled: boolean) => {
     try {
-      const res = await fetch("/api/hpo", {
+      const res = await authFetch("/api/hpo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -366,10 +354,10 @@ export default function ConversationPage() {
 
   const handleSend = useCallback(
     async (content: string) => {
-      if (!session?.user?.id || !conversation) return;
+      if (!session_user?.id || !conversation) return;
 
       const recipient = conversation.participants.find(
-        (p) => p.user.id !== session.user.id
+        (p) => p.user.id !== session_user!.id
       )?.user;
 
       if (!recipient) return;
@@ -424,7 +412,7 @@ export default function ConversationPage() {
       const packet: EncryptedPacket = {
         id: "",
         conversationId,
-        senderId: session.user.id,
+        senderId: session_user!.id,
         recipientId: recipient.id,
         ciphertext,
         ratchetHeader,
@@ -443,14 +431,14 @@ export default function ConversationPage() {
         const newMsg: DisplayMessage = {
           id: msgId,
           content,
-          senderId: session.user.id,
+          senderId: session_user!.id,
           timestamp: Date.now(),
           encrypted,
         };
         setMessages((prev) => [...prev, newMsg]);
       }
     },
-    [session, conversation, conversationId, sendMessage]
+    [session_user, conversation, conversationId, sendMessage]
   );
 
   const otherUser = conversation?.participants.find(
@@ -474,7 +462,7 @@ export default function ConversationPage() {
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              onClick={() => signOut({ callbackUrl: "/login" })}
+              onClick={logout}
             >
               <LogOut className="h-4 w-4" />
             </Button>
@@ -485,7 +473,7 @@ export default function ConversationPage() {
           <p className="text-xs text-muted-foreground">
             Signed in as{" "}
             <span className="font-medium">
-              {session?.user?.name || "User"}
+              {session_user?.displayName || "User"}
             </span>
           </p>
         </div>

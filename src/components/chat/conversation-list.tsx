@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useAuth } from "@/components/providers/auth-provider";
+import { authFetch } from "@/lib/auth-client";
 import { useRouter, useParams } from "next/navigation";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -22,7 +23,7 @@ interface Conversation {
 }
 
 export function ConversationList() {
-  const { data: session } = useSession();
+  const { user } = useAuth();
   const router = useRouter();
   const params = useParams();
   const { onlineUsers } = useSocket();
@@ -37,7 +38,7 @@ export function ConversationList() {
 
   async function fetchConversations() {
     try {
-      const res = await fetch("/api/conversations");
+      const res = await authFetch("/api/conversations");
       const data = await res.json();
       setConversations(data.conversations || []);
     } catch (error) {
@@ -49,7 +50,7 @@ export function ConversationList() {
 
   function getOtherParticipant(conversation: Conversation) {
     return conversation.participants.find(
-      (p) => p.user.id !== session?.user?.id
+      (p) => p.user.id !== user?.id
     )?.user;
   }
 

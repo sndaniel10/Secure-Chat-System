@@ -1,6 +1,6 @@
 "use client";
 
-import { useSession, signOut } from "next-auth/react";
+import { useAuth } from "@/components/providers/auth-provider";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { NewChatDialog } from "@/components/chat/new-chat-dialog";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { Shield, LogOut, MessageSquare } from "lucide-react";
 
 export default function ChatPage() {
-  const { data: session } = useSession();
+  const { user, logout } = useAuth();
 
   return (
     <div className="flex h-screen">
@@ -25,7 +25,7 @@ export default function ChatPage() {
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              onClick={() => signOut({ callbackUrl: "/login" })}
+              onClick={logout}
             >
               <LogOut className="h-4 w-4" />
             </Button>
@@ -36,7 +36,7 @@ export default function ChatPage() {
           <p className="text-xs text-muted-foreground">
             Signed in as{" "}
             <span className="font-medium">
-              {session?.user?.name || "User"}
+              {user?.displayName || "User"}
             </span>
           </p>
         </div>

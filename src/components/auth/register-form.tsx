@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,7 @@ import { Shield, UserPlus } from "lucide-react";
 
 export function RegisterForm() {
   const router = useRouter();
+  const { login } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -40,6 +41,7 @@ export function RegisterForm() {
     }
 
     try {
+      // Register
       const res = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -49,23 +51,19 @@ export function RegisterForm() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || "Registration failed");
+        setError(data.detail || data.error || "Registration failed");
         setLoading(false);
         return;
       }
 
       // Auto-login after registration
-      const result = await signIn("credentials", {
-        username,
-        password,
-        redirect: false,
-      });
+      const loginResult = await login(username, password);
 
-      if (result?.error) {
+      if (loginResult.error) {
         setError("Registration succeeded but login failed. Please try logging in.");
         setLoading(false);
       } else {
-        // Initialize E2EE keys after login — use per-user crypto store
+        // Initialize E2EE keys — use per-user crypto store
         try {
           const { initCryptoStore } = await import("@/crypto/store");
           initCryptoStore(data.id);
@@ -105,50 +103,19 @@ export function RegisterForm() {
           )}
           <div className="space-y-2">
             <Label htmlFor="username">Username</Label>
-            <Input
-              id="username"
-              name="username"
-              type="text"
-              placeholder="Choose a username"
-              required
-              minLength={3}
-              maxLength={20}
-              autoComplete="username"
-            />
+            <Input id="username" name="username" type="text" placeholder="Choose a username" required minLength={3} maxLength={20} autoComplete="username" />
           </div>
           <div className="space-y-2">
             <Label htmlFor="displayName">Display Name</Label>
-            <Input
-              id="displayName"
-              name="displayName"
-              type="text"
-              placeholder="Your display name"
-              required
-            />
+            <Input id="displayName" name="displayName" type="text" placeholder="Your display name" required />
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              placeholder="At least 8 characters"
-              required
-              minLength={8}
-              autoComplete="new-password"
-            />
+            <Input id="password" name="password" type="password" placeholder="At least 8 characters" required minLength={8} autoComplete="new-password" />
           </div>
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirm Password</Label>
-            <Input
-              id="confirmPassword"
-              name="confirmPassword"
-              type="password"
-              placeholder="Confirm your password"
-              required
-              minLength={8}
-              autoComplete="new-password"
-            />
+            <Input id="confirmPassword" name="confirmPassword" type="password" placeholder="Confirm your password" required minLength={8} autoComplete="new-password" />
           </div>
         </CardContent>
         <CardFooter className="flex flex-col gap-3">

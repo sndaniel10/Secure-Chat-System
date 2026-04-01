@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { authFetch } from "@/lib/auth-client";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +39,7 @@ export function NewChatDialog() {
 
     setSearching(true);
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `/api/users/search?q=${encodeURIComponent(value)}`
       );
       const data = await res.json();
@@ -53,7 +54,7 @@ export function NewChatDialog() {
   async function startConversation(recipientId: string) {
     setCreating(true);
     try {
-      const res = await fetch("/api/conversations", {
+      const res = await authFetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recipientId }),

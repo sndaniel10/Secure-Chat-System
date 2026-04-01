@@ -6,22 +6,13 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
   ReactNode,
 } from "react";
-import { io, Socket } from "socket.io-client";
-import { useSession } from "next-auth/react";
-import {
-  ServerToClientEvents,
-  ClientToServerEvents,
-  HPOWirePacket,
-  EncryptedPacket,
-} from "./events";
-import { SOCKET_PATH } from "@/lib/constants";
-
-type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+import { useAuth } from "@/components/providers/auth-provider";
+import { EncryptedPacket, HPOWirePacket } from "./events";
 
 interface SocketContextType {
-  socket: TypedSocket | null;
   isConnected: boolean;
   onlineUsers: Set<string>;
   sendMessage: (
@@ -32,13 +23,9 @@ interface SocketContextType {
   onHPOPacket: (handler: (data: HPOWirePacket) => void) => () => void;
   sendTyping: (conversationId: string) => void;
   sendStopTyping: (conversationId: string) => void;
-  onTyping: (
-    handler: (data: { userId: string; conversationId: string }) => void
-  ) => () => void;
 }
 
 const SocketContext = createContext<SocketContextType>({
-  socket: null,
   isConnected: false,
   onlineUsers: new Set(),
   sendMessage: async () => ({ success: false }),
@@ -47,145 +34,215 @@ const SocketContext = createContext<SocketContextType>({
   onHPOPacket: () => () => {},
   sendTyping: () => {},
   sendStopTyping: () => {},
-  onTyping: () => () => {},
 });
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const { data: session } = useSession();
-  const [socket, setSocket] = useState<TypedSocket | null>(null);
+  const { token, isAuthenticated } = useAuth();
+  const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
 
+  // Handlers stored in refs so they survive re-renders
+  const messageHandlersRef = useRef<Set<(data: EncryptedPacket) => void>>(new Set());
+  const hpoHandlersRef = useRef<Set<(data: HPOWirePacket) => void>>(new Set());
+
+  // Pending message acks: requestId -> {resolve}
+  const pendingAcksRef = useRef<Map<string, { resolve: (val: { success: boolean; messageId?: string }) => void }>>(new Map());
+
   useEffect(() => {
-    if (!session?.user?.id) return;
+    if (!isAuthenticated || !token) return;
 
-    const newSocket: TypedSocket = io({
-      path: SOCKET_PATH,
-      transports: ["websocket", "polling"],
-    });
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`;
 
-    newSocket.on("connect", () => {
-      console.log("[Socket] Connected");
-      setIsConnected(true);
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+    let reconnectDelay = 1000;
 
-      // Authenticate with server
-      newSocket.emit("user:authenticate", session.user.id, (ack) => {
-        if (ack.success) {
-          console.log("[Socket] Authenticated");
+    function connect() {
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log("[WS] Connected");
+        setIsConnected(true);
+        reconnectDelay = 1000; // Reset backoff
+      };
+
+      ws.onclose = () => {
+        console.log("[WS] Disconnected");
+        setIsConnected(false);
+        wsRef.current = null;
+        // Reconnect with exponential backoff
+        reconnectTimeout = setTimeout(() => {
+          reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+          connect();
+        }, reconnectDelay);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleServerMessage(msg);
+        } catch (err) {
+          console.error("[WS] Failed to parse message:", err);
         }
-      });
-    });
+      };
+    }
 
-    newSocket.on("disconnect", () => {
-      console.log("[Socket] Disconnected");
-      setIsConnected(false);
-    });
+    function handleServerMessage(msg: Record<string, unknown>) {
+      const type = msg.type as string;
 
-    newSocket.on("user:online", ({ userId }) => {
-      setOnlineUsers((prev) => new Set([...prev, userId]));
-    });
+      switch (type) {
+        case "auth:success":
+          console.log("[WS] Authenticated");
+          break;
 
-    newSocket.on("user:offline", ({ userId }) => {
-      setOnlineUsers((prev) => {
-        const next = new Set(prev);
-        next.delete(userId);
-        return next;
-      });
-    });
+        case "user:online":
+          setOnlineUsers((prev) => new Set([...prev, msg.userId as string]));
+          break;
 
-    setSocket(newSocket);
+        case "user:offline":
+          setOnlineUsers((prev) => {
+            const next = new Set(prev);
+            next.delete(msg.userId as string);
+            return next;
+          });
+          break;
+
+        case "message:receive":
+          for (const handler of messageHandlersRef.current) {
+            handler(msg.data as EncryptedPacket);
+          }
+          break;
+
+        case "message:ack": {
+          const requestId = msg.requestId as string;
+          const pending = pendingAcksRef.current.get(requestId);
+          if (pending) {
+            pending.resolve({
+              success: msg.success as boolean,
+              messageId: msg.messageId as string | undefined,
+            });
+            pendingAcksRef.current.delete(requestId);
+          }
+          break;
+        }
+
+        case "hpo:packet":
+          for (const handler of hpoHandlersRef.current) {
+            handler(msg as unknown as HPOWirePacket);
+          }
+          break;
+
+        case "user:typing":
+        case "user:stopTyping":
+          // Handled via broadcast — components listen through onMessage if needed
+          // For now, dispatch as a message:receive-like event
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    connect();
 
     return () => {
-      newSocket.disconnect();
-      setSocket(null);
+      clearTimeout(reconnectTimeout);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
       setIsConnected(false);
     };
-  }, [session?.user?.id]);
+  }, [isAuthenticated, token]);
+
+  const sendJSON = useCallback((data: Record<string, unknown>) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(data));
+    }
+  }, []);
 
   const sendMessage = useCallback(
-    async (
-      data: EncryptedPacket
-    ): Promise<{ success: boolean; messageId?: string }> => {
-      if (!socket?.connected) return { success: false };
+    async (data: EncryptedPacket): Promise<{ success: boolean; messageId?: string }> => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        return { success: false };
+      }
+
+      const requestId = crypto.randomUUID();
 
       return new Promise((resolve) => {
-        socket.emit("message:send", data, (ack) => {
-          resolve(ack);
+        // Timeout after 10 seconds
+        const timeout = setTimeout(() => {
+          pendingAcksRef.current.delete(requestId);
+          resolve({ success: false });
+        }, 10000);
+
+        pendingAcksRef.current.set(requestId, {
+          resolve: (val) => {
+            clearTimeout(timeout);
+            resolve(val);
+          },
+        });
+
+        sendJSON({
+          type: "message:send",
+          requestId,
+          data,
         });
       });
     },
-    [socket]
+    [sendJSON]
   );
 
   const joinConversation = useCallback(
     (conversationId: string) => {
-      if (socket?.connected) {
-        socket.emit("conversation:join", conversationId);
-      }
+      sendJSON({ type: "conversation:join", conversationId });
     },
-    [socket]
+    [sendJSON]
   );
 
   const onMessage = useCallback(
     (handler: (data: EncryptedPacket) => void) => {
-      if (!socket) return () => {};
-      socket.on("message:receive", handler);
+      messageHandlersRef.current.add(handler);
       return () => {
-        socket.off("message:receive", handler);
+        messageHandlersRef.current.delete(handler);
       };
     },
-    [socket]
+    []
   );
 
   const onHPOPacket = useCallback(
     (handler: (data: HPOWirePacket) => void) => {
-      if (!socket) return () => {};
-      socket.on("hpo:packet", handler);
+      hpoHandlersRef.current.add(handler);
       return () => {
-        socket.off("hpo:packet", handler);
+        hpoHandlersRef.current.delete(handler);
       };
     },
-    [socket]
+    []
   );
 
   const sendTyping = useCallback(
     (conversationId: string) => {
-      if (socket?.connected) {
-        socket.emit("user:typing", conversationId);
-      }
+      sendJSON({ type: "user:typing", conversationId });
     },
-    [socket]
+    [sendJSON]
   );
 
   const sendStopTyping = useCallback(
     (conversationId: string) => {
-      if (socket?.connected) {
-        socket.emit("user:stopTyping", conversationId);
-      }
+      sendJSON({ type: "user:stopTyping", conversationId });
     },
-    [socket]
-  );
-
-  const onTyping = useCallback(
-    (
-      handler: (data: { userId: string; conversationId: string }) => void
-    ) => {
-      if (!socket) return () => {};
-      socket.on("user:typing", handler);
-      socket.on("user:stopTyping", (data) =>
-        handler({ ...data, userId: "" })
-      );
-      return () => {
-        socket.off("user:typing", handler);
-      };
-    },
-    [socket]
+    [sendJSON]
   );
 
   return (
     <SocketContext.Provider
       value={{
-        socket,
         isConnected,
         onlineUsers,
         sendMessage,
@@ -194,7 +251,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         onHPOPacket,
         sendTyping,
         sendStopTyping,
-        onTyping,
       }}
     >
       {children}

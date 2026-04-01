@@ -1,12 +1,17 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+"use client";
 
-export default async function Home() {
-  const session = await auth();
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/providers/auth-provider";
 
-  if (session) {
-    redirect("/chat");
-  } else {
-    redirect("/login");
-  }
+export default function Home() {
+  const { isAuthenticated, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (loading) return;
+    router.push(isAuthenticated ? "/chat" : "/login");
+  }, [isAuthenticated, loading, router]);
+
+  return null;
 }

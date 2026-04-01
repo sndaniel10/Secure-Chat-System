@@ -9,6 +9,7 @@
 
 import { generateIdentityKeys, KeyBundle } from "./x3dh";
 import { getIdentityKey } from "./store";
+import { authFetch } from "@/lib/auth-client";
 
 /**
  * Generate and upload keys during registration.
@@ -20,7 +21,7 @@ export async function initializeKeys(): Promise<boolean> {
     const bundle = await generateIdentityKeys();
 
     // Upload public key bundle to server
-    const res = await fetch("/api/keys/upload", {
+    const res = await authFetch("/api/keys/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -58,7 +59,7 @@ export async function fetchKeyBundle(
   userId: string
 ): Promise<KeyBundle | null> {
   try {
-    const res = await fetch(`/api/keys/bundle?userId=${userId}`);
+    const res = await authFetch(`/api/keys/bundle?userId=${userId}`);
     if (!res.ok) return null;
     const data = await res.json();
     return data.bundle;

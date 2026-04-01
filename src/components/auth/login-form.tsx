@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,7 @@ import { Lock, Shield } from "lucide-react";
 
 export function LoginForm() {
   const router = useRouter();
+  const { login } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -31,14 +32,10 @@ export function LoginForm() {
     const username = formData.get("username") as string;
     const password = formData.get("password") as string;
 
-    const result = await signIn("credentials", {
-      username,
-      password,
-      redirect: false,
-    });
+    const result = await login(username, password);
 
-    if (result?.error) {
-      setError("Invalid username or password");
+    if (result.error) {
+      setError(result.error);
       setLoading(false);
     } else {
       router.push("/chat");
