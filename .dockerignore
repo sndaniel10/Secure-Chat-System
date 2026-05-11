@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.env
+.env.local
+backend
+prisma
+dev.db
+src/generated
+evaluation
+**/__pycache__
+**/*.pyc
+*.md

@@ -124,9 +124,14 @@ export default function ConversationPage() {
 
   // Fetch conversation info
   useEffect(() => {
+    if (!session_user?.id) return;
     async function fetchConversation() {
       try {
         const res = await authFetch("/api/conversations");
+        if (!res.ok) {
+          console.error("[API] conversations failed:", res.status);
+          return;
+        }
         const data = await res.json();
         const conv = data.conversations?.find(
           (c: ConversationData) => c.id === conversationId
@@ -137,7 +142,7 @@ export default function ConversationPage() {
       }
     }
     fetchConversation();
-  }, [conversationId]);
+  }, [conversationId, session_user?.id]);
 
   // Initialize E2EE session
   useEffect(() => {
@@ -227,6 +232,9 @@ export default function ConversationPage() {
     }
     if (e2eeReady) {
       fetchMessages();
+    } else {
+      // Don't block UI while waiting for E2EE init
+      setLoading(false);
     }
   }, [conversationId, e2eeReady]);
 
