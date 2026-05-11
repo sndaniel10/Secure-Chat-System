@@ -6,10 +6,34 @@ import { handleConnection } from "./src/lib/ws/handler";
 import { startCrt, stopCrt } from "./src/lib/hpo/crt-engine";
 
 const dev = process.env.NODE_ENV !== "production";
-const port = Number(process.env.PORT ?? 3000);
-const hostname = process.env.HOSTNAME ?? "0.0.0.0";
+const desiredPort = Number(process.env.PORT ?? 3000);
+// Dev defaults to localhost (matches `next dev`); prod listens on 0.0.0.0 for Cloud Run.
+const hostname =
+  process.env.HOSTNAME ?? (dev ? "localhost" : "0.0.0.0");
+
+async function findAvailablePort(start: number, host: string): Promise<number> {
+  for (let p = start; p < start + 20; p += 1) {
+    const free = await new Promise<boolean>((resolve) => {
+      const probe = createServer();
+      probe.once("error", (err: NodeJS.ErrnoException) => {
+        probe.close();
+        resolve(err.code !== "EADDRINUSE");
+      });
+      probe.once("listening", () => probe.close(() => resolve(true)));
+      probe.listen(p, host);
+    });
+    if (free) return p;
+  }
+  throw new Error(`No available port in range ${start}-${start + 19}`);
+}
 
 async function main() {
+  // In dev, mirror `next dev`'s behavior: fall back to next free port if busy.
+  const port = dev ? await findAvailablePort(desiredPort, hostname) : desiredPort;
+  if (port !== desiredPort) {
+    console.log(` ⚠ Port ${desiredPort} in use — using ${port} instead`);
+  }
+
   const app = next({ dev, hostname, port });
   const handle = app.getRequestHandler();
   await app.prepare();
@@ -43,7 +67,7 @@ async function main() {
   });
 
   httpServer.listen(port, hostname, () => {
-    console.log(`> Ready on http://${hostname}:${port}`);
+    console.log(`  ▲ Next.js  http://${hostname}:${port}`);
     startCrt();
   });
 
