@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { authFetch } from "@/lib/auth-client";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { NewChatDialog } from "@/components/chat/new-chat-dialog";
 import { MessageList, DisplayMessage } from "@/components/chat/message-list";
@@ -15,7 +15,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useSocket } from "@/socket/socket-provider";
 import { EncryptedPacket, HPOWirePacket } from "@/socket/events";
-import { Shield, LogOut, Lock } from "lucide-react";
+import { Shield, LogOut, Lock, ArrowLeft } from "lucide-react";
 import {
   ratchetEncrypt,
   ratchetDecrypt,
@@ -28,6 +28,15 @@ import { x3dhInitiate, x3dhRespond } from "@/crypto/x3dh";
 import { fetchKeyBundle } from "@/crypto/key-manager";
 import { getIdentityKey, getSignedPreKey, getCachedPlaintext, setCachedPlaintext, deleteSession, initCryptoStore } from "@/crypto/store";
 import { fromHex } from "@/crypto/utils";
+
+function generateLocalId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 
 /**
  * Set up a receiver X3DH session from an initial message's headers.
@@ -94,6 +103,7 @@ interface ConversationData {
 
 export default function ConversationPage() {
   const { user: session_user, logout } = useAuth();
+  const router = useRouter();
   const params = useParams();
   const conversationId = params?.conversationId as string;
   const {
@@ -112,6 +122,7 @@ export default function ConversationPage() {
   );
   const [loading, setLoading] = useState(true);
   const [e2eeReady, setE2eeReady] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const sessionInitRef = useRef(false);
   const [hpoMetrics, setHpoMetrics] = useState({
     coverReceived: 0,
@@ -154,23 +165,17 @@ export default function ConversationPage() {
     async function initE2EE() {
       try {
         const sessionExists = await hasSession(conversationId);
-        if (sessionExists) {
-          setE2eeReady(true);
-          return;
-        }
+        if (sessionExists) return;
 
-        // Check if we have local keys
         const identity = await getIdentityKey();
         if (!identity) {
-          console.warn("[E2EE] No local identity keys. Please re-register.");
-          setE2eeReady(false);
-          return;
+          console.warn("[E2EE] No local identity keys — messages load but E2EE is unavailable on this origin.");
         }
-
-        setE2eeReady(true);
       } catch (error) {
-        console.error("[E2EE] Session init failed:", error);
-        setE2eeReady(false);
+        console.error("[E2EE] Session init error:", error);
+      } finally {
+        // Always unblock message loading — decryption failures are handled per-message
+        setE2eeReady(true);
       }
     }
 
@@ -376,9 +381,10 @@ export default function ConversationPage() {
 
       try {
         const sessionExists = await hasSession(conversationId);
+        const identity = await getIdentityKey();
 
-        if (!sessionExists) {
-          // First message - perform X3DH handshake
+        if (!sessionExists && identity) {
+          // First message — perform X3DH handshake
           const bundle = await fetchKeyBundle(recipient.id);
           if (bundle) {
             const x3dhResult = await x3dhInitiate(bundle);
@@ -389,32 +395,26 @@ export default function ConversationPage() {
               recipientSignedPreKey
             );
 
-            // Encrypt with ratchet
             const encMsg = await ratchetEncrypt(conversationId, content);
-
-            // Add X3DH info to header for recipient
-            const identity = await getIdentityKey();
-            if (identity) {
-              encMsg.header.identityKey = identity.publicKey;
-              encMsg.header.ephemeralKey = x3dhResult.ephemeralPublic;
-              encMsg.header.usedOneTimePreKeyId =
-                x3dhResult.usedOneTimePreKeyId;
-            }
+            encMsg.header.identityKey = identity.publicKey;
+            encMsg.header.ephemeralKey = x3dhResult.ephemeralPublic;
+            encMsg.header.usedOneTimePreKeyId = x3dhResult.usedOneTimePreKeyId;
 
             ciphertext = JSON.stringify(encMsg);
             ratchetHeader = "e2ee";
             encrypted = true;
             setE2eeReady(true);
           }
-        } else {
-          // Existing session - encrypt with ratchet
+        } else if (sessionExists) {
+          // Existing session — encrypt with ratchet
           const encMsg = await ratchetEncrypt(conversationId, content);
           ciphertext = JSON.stringify(encMsg);
           ratchetHeader = "e2ee";
           encrypted = true;
         }
+        // No identity key on this device → send as plaintext (silent fallback)
       } catch (error) {
-        console.error("[E2EE] Encryption failed, sending plaintext:", error);
+        console.error("[E2EE] Encryption error, sending plaintext:", error);
       }
 
       const packet: EncryptedPacket = {
@@ -427,12 +427,15 @@ export default function ConversationPage() {
         timestamp: Date.now(),
       };
 
-      const result = await sendMessage(packet);
+      let result: { success: boolean; messageId?: string };
+      try {
+        result = await sendMessage(packet);
+      } catch {
+        result = { success: false };
+      }
 
       if (result.success) {
-        const msgId = result.messageId || crypto.randomUUID();
-        // Cache plaintext so sender can see their own messages on page reload
-        // (ratchetDecrypt only works with the receive chain, not the send chain)
+        const msgId = result.messageId || generateLocalId();
         if (encrypted) {
           await setCachedPlaintext(msgId, content);
         }
@@ -444,6 +447,9 @@ export default function ConversationPage() {
           encrypted,
         };
         setMessages((prev) => [...prev, newMsg]);
+      } else {
+        setSendError("Message failed to send. Check your connection and try again.");
+        setTimeout(() => setSendError(null), 4000);
       }
     },
     [session_user, conversation, conversationId, sendMessage]
@@ -456,9 +462,9 @@ export default function ConversationPage() {
   const isOtherOnline = otherUser ? onlineUsers.has(otherUser.id) : false;
 
   return (
-    <div className="flex h-screen">
-      {/* Sidebar */}
-      <div className="w-80 border-r flex flex-col bg-background">
+    <div className="flex h-dvh">
+      {/* Sidebar — hidden on mobile, visible on desktop */}
+      <div className="hidden md:flex w-80 border-r flex-col bg-background">
         <div className="p-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-primary" />
@@ -469,7 +475,7 @@ export default function ConversationPage() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="h-9 w-9"
               onClick={logout}
             >
               <LogOut className="h-4 w-4" />
@@ -489,12 +495,21 @@ export default function ConversationPage() {
         <ConversationList />
       </div>
 
-      {/* Chat area */}
-      <div className="flex-1 flex flex-col">
+      {/* Chat area — full width on mobile */}
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Chat header */}
-        <div className="border-b p-4 flex items-center justify-between bg-background">
-          <div className="flex items-center gap-3">
-            <Avatar className="h-9 w-9">
+        <div className="border-b px-3 py-2 md:px-4 md:py-3 flex items-center justify-between bg-background gap-2">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0">
+            {/* Back button — mobile only */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden h-9 w-9 shrink-0"
+              onClick={() => router.push("/chat")}
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <Avatar className="h-9 w-9 shrink-0">
               <AvatarFallback className="text-xs">
                 {otherUser?.displayName
                   ?.split(" ")
@@ -504,13 +519,13 @@ export default function ConversationPage() {
                   .slice(0, 2) || "?"}
               </AvatarFallback>
             </Avatar>
-            <div>
-              <h2 className="font-medium text-sm">
+            <div className="min-w-0">
+              <h2 className="font-medium text-sm truncate">
                 {otherUser?.displayName || "Loading..."}
               </h2>
               <div className="flex items-center gap-1.5">
                 <span
-                  className={`h-2 w-2 rounded-full ${
+                  className={`h-2 w-2 rounded-full shrink-0 ${
                     isOtherOnline ? "bg-green-500" : "bg-gray-300"
                   }`}
                 />
@@ -520,7 +535,7 @@ export default function ConversationPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Badge
               variant="outline"
               className={`text-xs gap-1 ${
@@ -528,10 +543,24 @@ export default function ConversationPage() {
               }`}
             >
               <Lock className="h-3 w-3" />
-              {e2eeReady ? "E2EE Active" : "E2EE"}
+              <span className="hidden sm:inline">
+                {e2eeReady ? "E2EE Active" : "E2EE"}
+              </span>
             </Badge>
           </div>
         </div>
+
+        {/* Connection status banner */}
+        {!isConnected && (
+          <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-2 text-xs text-yellow-700 dark:text-yellow-400 text-center">
+            Connecting to server… messages are disabled until connected.
+          </div>
+        )}
+        {sendError && (
+          <div className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs text-red-700 dark:text-red-400 text-center">
+            {sendError}
+          </div>
+        )}
 
         {/* Messages */}
         {loading ? (

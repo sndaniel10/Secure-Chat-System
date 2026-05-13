@@ -34,6 +34,7 @@ export async function handleConnection(ws: WebSocket, token: string): Promise<vo
         | undefined;
       if (convId) manager.joinRoom(userId, convId);
     } else if (msgType === "message:send") {
+      console.log(`[WS] message:send from ${userId}`);
       await handleMessageSend(userId, data);
     } else if (msgType === "user:typing" || msgType === "user:stopTyping") {
       const convId = (data.conversationId ?? data.conversation_id) as
@@ -50,7 +51,7 @@ export async function handleConnection(ws: WebSocket, token: string): Promise<vo
   });
 
   ws.on("close", () => {
-    manager.disconnect(userId);
+    manager.disconnect(userId, ws);
     console.log(`[WS] User disconnected: ${userId}`);
   });
 
@@ -108,6 +109,7 @@ async function handleMessageSend(
       manager.sendToUser(recipientId, { type: "message:receive", data: packet });
     }
 
+    console.log(`[WS] message:ack sent to ${senderId} (id: ${messageId})`);
     manager.sendToUser(senderId, {
       type: "message:ack",
       requestId,

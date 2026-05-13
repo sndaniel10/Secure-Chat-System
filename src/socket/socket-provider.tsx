@@ -12,6 +12,15 @@ import {
 import { useAuth } from "@/components/providers/auth-provider";
 import { EncryptedPacket, HPOWirePacket } from "./events";
 
+function generateId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 interface SocketContextType {
   isConnected: boolean;
   onlineUsers: Set<string>;
@@ -69,6 +78,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       };
 
       ws.onclose = () => {
+        // Guard: if wsRef already points to a newer socket, this close is stale
+        // (happens when effect cleanup closes the old socket after a new one is created)
+        if (wsRef.current !== ws) return;
         console.log("[WS] Disconnected");
         setIsConnected(false);
         wsRef.current = null;
@@ -173,7 +185,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return { success: false };
       }
 
-      const requestId = crypto.randomUUID();
+      const requestId = generateId();
 
       return new Promise((resolve) => {
         // Timeout after 10 seconds

@@ -1,28 +1,44 @@
 import type { WebSocket } from "ws";
 
 class ConnectionManager {
-  private connections = new Map<string, WebSocket>();
+  // Multiple sockets per userId to support multi-session (e.g. localhost + network IP)
+  private connections = new Map<string, Set<WebSocket>>();
   private rooms = new Map<string, Set<string>>();
 
   async connect(ws: WebSocket, userId: string): Promise<void> {
-    this.connections.set(userId, ws);
-    this.rooms.set(userId, new Set());
+    const isFirstSession = !this.connections.has(userId);
 
-    // Tell the new connection about everyone already online
+    if (isFirstSession) {
+      this.connections.set(userId, new Set());
+      this.rooms.set(userId, new Set());
+    }
+    this.connections.get(userId)!.add(ws);
+
+    // Tell the new socket about everyone already online
     for (const onlineId of this.connections.keys()) {
       if (onlineId !== userId) {
-        this.sendToUser(userId, { type: "user:online", userId: onlineId });
+        this.sendToSocket(ws, { type: "user:online", userId: onlineId });
       }
     }
 
-    // Notify others
-    this.broadcast({ type: "user:online", userId }, userId);
+    // Notify others only when the first session for this user connects
+    if (isFirstSession) {
+      this.broadcast({ type: "user:online", userId }, userId);
+    }
   }
 
-  disconnect(userId: string): void {
-    this.connections.delete(userId);
-    this.rooms.delete(userId);
-    this.broadcast({ type: "user:offline", userId });
+  disconnect(userId: string, ws: WebSocket): void {
+    const sockets = this.connections.get(userId);
+    if (!sockets) return;
+
+    sockets.delete(ws);
+
+    if (sockets.size === 0) {
+      // Last session gone — user is now offline
+      this.connections.delete(userId);
+      this.rooms.delete(userId);
+      this.broadcast({ type: "user:offline", userId });
+    }
   }
 
   joinRoom(userId: string, conversationId: string): void {
@@ -30,12 +46,18 @@ class ConnectionManager {
   }
 
   sendToUser(userId: string, message: Record<string, unknown>): void {
-    const ws = this.connections.get(userId);
-    if (!ws) return;
+    const sockets = this.connections.get(userId);
+    if (!sockets) return;
+    for (const ws of sockets) {
+      this.sendToSocket(ws, message);
+    }
+  }
+
+  private sendToSocket(ws: WebSocket, message: Record<string, unknown>): void {
     try {
       ws.send(JSON.stringify(message));
     } catch {
-      // Drop on error; the close handler will clean up.
+      // Drop on error; the close handler will clean up
     }
   }
 
@@ -62,7 +84,7 @@ class ConnectionManager {
   }
 
   isOnline(userId: string): boolean {
-    return this.connections.has(userId);
+    return (this.connections.get(userId)?.size ?? 0) > 0;
   }
 }
 

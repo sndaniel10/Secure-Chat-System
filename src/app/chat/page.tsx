@@ -11,9 +11,9 @@ export default function ChatPage() {
   const { user, logout } = useAuth();
 
   return (
-    <div className="flex h-screen">
-      {/* Sidebar */}
-      <div className="w-80 border-r flex flex-col bg-background">
+    <div className="flex h-dvh">
+      {/* Sidebar — full screen on mobile, fixed width on desktop */}
+      <div className="w-full md:w-80 border-r flex flex-col bg-background">
         <div className="p-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-primary" />
@@ -24,7 +24,7 @@ export default function ChatPage() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="h-9 w-9"
               onClick={logout}
             >
               <LogOut className="h-4 w-4" />
@@ -35,17 +35,15 @@ export default function ChatPage() {
         <div className="px-4 py-2">
           <p className="text-xs text-muted-foreground">
             Signed in as{" "}
-            <span className="font-medium">
-              {user?.displayName || "User"}
-            </span>
+            <span className="font-medium">{user?.displayName || "User"}</span>
           </p>
         </div>
         <Separator />
         <ConversationList />
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex items-center justify-center bg-muted/20">
+      {/* Empty state — desktop only */}
+      <div className="hidden md:flex flex-1 items-center justify-center bg-muted/20">
         <div className="text-center space-y-3 text-muted-foreground">
           <MessageSquare className="h-16 w-16 mx-auto opacity-20" />
           <h2 className="text-xl font-medium">HPO Encrypted Chat</h2>

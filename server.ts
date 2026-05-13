@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import { networkInterfaces } from "node:os";
 import next from "next";
 import { WebSocketServer } from "ws";
 import { handleConnection } from "./src/lib/ws/handler";
@@ -7,9 +8,8 @@ import { startCrt, stopCrt } from "./src/lib/hpo/crt-engine";
 
 const dev = process.env.NODE_ENV !== "production";
 const desiredPort = Number(process.env.PORT ?? 3000);
-// Dev defaults to localhost (matches `next dev`); prod listens on 0.0.0.0 for Cloud Run.
-const hostname =
-  process.env.HOSTNAME ?? (dev ? "localhost" : "0.0.0.0");
+// Bind on all interfaces so the network URL works (same as `next dev`).
+const hostname = process.env.HOSTNAME ?? "0.0.0.0";
 
 async function findAvailablePort(start: number, host: string): Promise<number> {
   for (let p = start; p < start + 20; p += 1) {
@@ -37,6 +37,8 @@ async function main() {
   const app = next({ dev, hostname, port });
   const handle = app.getRequestHandler();
   await app.prepare();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nextUpgrade = (app as any).getUpgradeHandler?.();
 
   const httpServer = createServer((req, res) => {
     if (req.url === "/ws" || req.url?.startsWith("/ws?")) {
@@ -51,23 +53,34 @@ async function main() {
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
-    if (!req.url?.startsWith("/ws")) {
-      socket.destroy();
-      return;
-    }
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const token = url.searchParams.get("token") ?? "";
-
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      handleConnection(ws, token).catch((err) => {
-        console.error("[WS] Upgrade handler error:", err);
-        ws.close(1011, "Internal error");
+    if (req.url?.startsWith("/ws")) {
+      // Our chat WebSocket
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const token = url.searchParams.get("token") ?? "";
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        handleConnection(ws, token).catch((err) => {
+          console.error("[WS] Upgrade handler error:", err);
+          ws.close(1011, "Internal error");
+        });
       });
-    });
+    } else if (nextUpgrade) {
+      // Next.js HMR and other internal WebSockets
+      nextUpgrade(req, socket, head);
+    } else {
+      socket.destroy();
+    }
   });
 
   httpServer.listen(port, hostname, () => {
-    console.log(`  ▲ Next.js  http://${hostname}:${port}`);
+    const nets = networkInterfaces();
+    const networkIp = Object.values(nets)
+      .flat()
+      .find((n) => n?.family === "IPv4" && !n.internal)?.address;
+
+    console.log(`\n  ▲ Next.js\n`);
+    console.log(`  - Local:    http://localhost:${port}`);
+    if (networkIp) console.log(`  - Network:  http://${networkIp}:${port}`);
+    console.log();
     startCrt();
   });
 
