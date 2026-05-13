@@ -5,6 +5,7 @@ import { decodeAccessToken } from "@/lib/auth-server";
 import { manager } from "./manager";
 import { isHpoEnabled } from "@/lib/hpo/config";
 import { enqueueMessage } from "@/lib/hpo/message-queue";
+import { sendPush } from "@/lib/push/vapid";
 
 export async function handleConnection(ws: WebSocket, token: string): Promise<void> {
   const payload = await decodeAccessToken(token);
@@ -107,6 +108,21 @@ async function handleMessageSend(
       enqueueMessage(recipientId, { type: "real", packet, recipientId });
     } else if (recipientId && manager.isOnline(recipientId)) {
       manager.sendToUser(recipientId, { type: "message:receive", data: packet });
+    } else if (recipientId) {
+      // Recipient is offline — deliver via push notification
+      const [subscriptions, senderDoc] = await Promise.all([
+        db.collection("push_subscriptions").find({ userId: recipientId }).toArray(),
+        db.collection("users").findOne({ _id: new ObjectId(senderId) }),
+      ]);
+      const senderName = (senderDoc?.displayName as string) || "Someone";
+      for (const sub of subscriptions) {
+        sendPush(sub.subscription as Parameters<typeof sendPush>[0], {
+          title: "HPO Chat",
+          body: `New message from ${senderName}`,
+          url: `/chat/${conversationId}`,
+          tag: conversationId,
+        }).catch(() => {});
+      }
     }
 
     console.log(`[WS] message:ack sent to ${senderId} (id: ${messageId})`);

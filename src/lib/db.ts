@@ -1,4 +1,9 @@
+import dns from "dns";
 import { MongoClient, type Db } from "mongodb";
+
+// Some routers don't handle DNS SRV queries (needed for mongodb+srv://).
+// Force Node.js to use Google's public DNS which fully supports SRV records.
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 const FALLBACK_DB_NAME = process.env.DATABASE_NAME ?? "hpo_chat";
 

@@ -28,6 +28,7 @@ import { x3dhInitiate, x3dhRespond } from "@/crypto/x3dh";
 import { fetchKeyBundle } from "@/crypto/key-manager";
 import { getIdentityKey, getSignedPreKey, getCachedPlaintext, setCachedPlaintext, deleteSession, initCryptoStore } from "@/crypto/store";
 import { fromHex } from "@/crypto/utils";
+import { useNotifications } from "@/components/providers/notification-provider";
 
 function generateLocalId(): string {
   const bytes = new Uint8Array(16);
@@ -132,6 +133,11 @@ export default function ConversationPage() {
   const [isTyping, setIsTyping] = useState(false);
 
   const currentUserId = session_user?.id || "";
+  const { showInAppNotification } = useNotifications();
+
+  const otherUser = conversation?.participants.find(
+    (p) => p.user.id !== currentUserId
+  )?.user;
 
   // Fetch conversation info
   useEffect(() => {
@@ -277,9 +283,17 @@ export default function ConversationPage() {
         encrypted,
       };
       setMessages((prev) => [...prev, newMsg]);
+
+      if (data.senderId !== currentUserId) {
+        showInAppNotification(
+          otherUser?.displayName || "HPO Chat",
+          content,
+          `/chat/${conversationId}`
+        );
+      }
     });
     return cleanup;
-  }, [onMessage, conversationId]);
+  }, [onMessage, conversationId, currentUserId, otherUser, showInAppNotification]);
 
   // Listen for HPO packets
   useEffect(() => {
@@ -336,13 +350,21 @@ export default function ConversationPage() {
             encrypted,
           };
           setMessages((prev) => [...prev, newMsg]);
+
+          if (packet.senderId !== currentUserId) {
+            showInAppNotification(
+              otherUser?.displayName || "HPO Chat",
+              content,
+              `/chat/${conversationId}`
+            );
+          }
         }
       } catch (error) {
         console.error("[HPO] Failed to parse packet:", error);
       }
     });
     return cleanup;
-  }, [onHPOPacket, conversationId]);
+  }, [onHPOPacket, conversationId, currentUserId, otherUser, showInAppNotification]);
 
   // Typing indicators are now handled server-side via WebSocket broadcast.
   // The current WebSocket provider doesn't expose raw typing events yet,
@@ -452,10 +474,6 @@ export default function ConversationPage() {
     },
     [session_user, conversation, conversationId, sendMessage]
   );
-
-  const otherUser = conversation?.participants.find(
-    (p) => p.user.id !== currentUserId
-  )?.user;
 
   const isOtherOnline = otherUser ? onlineUsers.has(otherUser.id) : false;
 
