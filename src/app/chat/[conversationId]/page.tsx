@@ -174,9 +174,9 @@ export default function ConversationPage() {
         if (sessionExists) return;
 
         const identity = await getIdentityKey();
+        const password = getPassword();
         if (!identity) {
-          // Try to restore private keys from the server vault using the in-memory password
-          const password = getPassword();
+          // No local keys — try to restore from the server vault
           if (password) {
             const { restoreFromVault } = await import("@/crypto/key-manager");
             const restored = await restoreFromVault(password);
@@ -186,6 +186,10 @@ export default function ConversationPage() {
           } else {
             console.warn("[E2EE] No local identity keys and no password in memory — E2EE unavailable.");
           }
+        } else if (password) {
+          // Keys exist locally — silently upload vault if this user has none yet
+          const { ensureVaultSynced } = await import("@/crypto/key-manager");
+          ensureVaultSynced(password).catch(() => {});
         }
       } catch (error) {
         console.error("[E2EE] Session init error:", error);

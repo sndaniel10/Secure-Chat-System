@@ -61,6 +61,27 @@ async function uploadVault(password: string): Promise<void> {
   });
 }
 
+let vaultSynced = false;
+
+/**
+ * If the user has local keys but no server vault yet (e.g. registered before
+ * vault support was added), upload one silently. Safe to call on every login —
+ * it skips the upload if a vault already exists or keys are missing.
+ */
+export async function ensureVaultSynced(password: string): Promise<void> {
+  if (vaultSynced) return;
+  vaultSynced = true;
+  try {
+    const res = await authFetch("/api/keys/vault");
+    if (!res.ok) return;
+    const { vault } = await res.json();
+    if (vault) return; // Already backed up
+    await uploadVault(password);
+  } catch {
+    // Non-critical — don't block anything
+  }
+}
+
 /**
  * Restore private keys from the server vault on a new origin.
  * Returns true if keys were successfully restored.
