@@ -68,7 +68,7 @@ export function RegisterForm() {
           const { initCryptoStore } = await import("@/crypto/store");
           initCryptoStore(data.id);
           const { initializeKeys } = await import("@/crypto/key-manager");
-          await initializeKeys();
+          await initializeKeys(password);
         } catch (e) {
           console.error("Failed to initialize crypto keys:", e);
         }

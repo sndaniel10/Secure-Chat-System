@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
   ReactNode,
 } from "react";
 import { useRouter, usePathname } from "next/navigation";
@@ -25,6 +26,7 @@ interface AuthContextType {
   loading: boolean;
   login: (username: string, password: string) => Promise<{ error?: string }>;
   logout: () => void;
+  getPassword: () => string | null;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -34,6 +36,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   login: async () => ({ error: "Not initialized" }),
   logout: () => {},
+  getPassword: () => null,
 });
 
 const PUBLIC_PATHS = ["/login", "/register"];
@@ -42,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setTokenState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const passwordRef = useRef<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -82,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         const data = await res.json();
+        passwordRef.current = password;
         setToken(data.access_token);
         setTokenState(data.access_token);
 
@@ -102,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    passwordRef.current = null;
     removeToken();
     setTokenState(null);
     setUser(null);
@@ -117,6 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         login,
         logout,
+        getPassword: () => passwordRef.current,
       }}
     >
       {children}

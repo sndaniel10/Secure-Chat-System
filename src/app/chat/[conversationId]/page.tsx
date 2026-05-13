@@ -103,7 +103,7 @@ interface ConversationData {
 }
 
 export default function ConversationPage() {
-  const { user: session_user, logout } = useAuth();
+  const { user: session_user, logout, getPassword } = useAuth();
   const router = useRouter();
   const params = useParams();
   const conversationId = params?.conversationId as string;
@@ -175,12 +175,21 @@ export default function ConversationPage() {
 
         const identity = await getIdentityKey();
         if (!identity) {
-          console.warn("[E2EE] No local identity keys — messages load but E2EE is unavailable on this origin.");
+          // Try to restore private keys from the server vault using the in-memory password
+          const password = getPassword();
+          if (password) {
+            const { restoreFromVault } = await import("@/crypto/key-manager");
+            const restored = await restoreFromVault(password);
+            if (!restored) {
+              console.warn("[E2EE] Vault restore failed — E2EE unavailable on this origin.");
+            }
+          } else {
+            console.warn("[E2EE] No local identity keys and no password in memory — E2EE unavailable.");
+          }
         }
       } catch (error) {
         console.error("[E2EE] Session init error:", error);
       } finally {
-        // Always unblock message loading — decryption failures are handled per-message
         setE2eeReady(true);
       }
     }

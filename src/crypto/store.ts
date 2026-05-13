@@ -153,6 +153,24 @@ export async function markPreKeyUsed(keyId: number) {
   }
 }
 
+export async function getAllPreKeys() {
+  const db = await getDB();
+  return db.getAll("prekeys");
+}
+
+export async function restoreFromKeyVault(vault: {
+  identityKey: { publicKey: string; privateKey: string };
+  signedPreKey: { publicKey: string; privateKey: string };
+  preKeys: Array<{ keyId: number; publicKey: string; privateKey: string; used: boolean }>;
+}) {
+  await setIdentityKey(vault.identityKey);
+  await setSignedPreKey(vault.signedPreKey);
+  const db = await getDB();
+  for (const pk of vault.preKeys) {
+    await db.put("prekeys", pk, pk.keyId);
+  }
+}
+
 // Decrypted message cache operations
 export async function getCachedPlaintext(messageId: string): Promise<string | undefined> {
   const db = await getDB();

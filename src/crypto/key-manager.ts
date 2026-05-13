@@ -8,16 +8,16 @@
  */
 
 import { generateIdentityKeys, KeyBundle } from "./x3dh";
-import { getIdentityKey } from "./store";
+import { getIdentityKey, getSignedPreKey, getAllPreKeys, restoreFromKeyVault } from "./store";
 import { authFetch } from "@/lib/auth-client";
+import { encryptVault, decryptVault } from "./vault";
 
 /**
- * Generate and upload keys during registration.
- * Returns true if successful.
+ * Generate and upload keys during registration, then back them up
+ * in an encrypted vault so any origin can restore them after login.
  */
-export async function initializeKeys(): Promise<boolean> {
+export async function initializeKeys(password: string): Promise<boolean> {
   try {
-    // Generate all key material locally
     const bundle = await generateIdentityKeys();
 
     // Upload public key bundle to server
@@ -33,9 +33,50 @@ export async function initializeKeys(): Promise<boolean> {
       }),
     });
 
-    return res.ok;
+    if (!res.ok) return false;
+
+    // Upload encrypted private key vault so other origins can restore keys
+    await uploadVault(password);
+
+    return true;
   } catch (error) {
     console.error("[KeyManager] Failed to initialize keys:", error);
+    return false;
+  }
+}
+
+async function uploadVault(password: string): Promise<void> {
+  const [identityKey, signedPreKey, preKeys] = await Promise.all([
+    getIdentityKey(),
+    getSignedPreKey(),
+    getAllPreKeys(),
+  ]);
+  if (!identityKey || !signedPreKey) return;
+
+  const encryptedVault = await encryptVault({ identityKey, signedPreKey, preKeys }, password);
+  await authFetch("/api/keys/vault", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ encryptedVault }),
+  });
+}
+
+/**
+ * Restore private keys from the server vault on a new origin.
+ * Returns true if keys were successfully restored.
+ */
+export async function restoreFromVault(password: string): Promise<boolean> {
+  try {
+    const res = await authFetch("/api/keys/vault");
+    if (!res.ok) return false;
+    const { vault } = await res.json();
+    if (!vault) return false;
+
+    const keyVault = await decryptVault(vault, password);
+    await restoreFromKeyVault(keyVault);
+    return true;
+  } catch (error) {
+    console.error("[KeyManager] Failed to restore vault:", error);
     return false;
   }
 }
