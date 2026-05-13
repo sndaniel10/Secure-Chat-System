@@ -212,8 +212,7 @@ export default function ConversationPage() {
                 content = await decryptMessage(conversationId, encMsg);
                 encrypted = true;
                 await setCachedPlaintext(msg.id, content);
-              } catch (err) {
-                console.error("[E2EE] Failed to decrypt stored message:", err);
+              } catch {
                 content = "[Encrypted message - decryption failed]";
               }
             }
@@ -265,8 +264,7 @@ export default function ConversationPage() {
           content = await decryptMessage(conversationId, encMsg);
           encrypted = true;
           if (data.id) await setCachedPlaintext(data.id, content);
-        } catch (err) {
-          console.error("[E2EE] Decryption failed:", err);
+        } catch {
           content = "[Encrypted message - decryption failed]";
         }
       }
