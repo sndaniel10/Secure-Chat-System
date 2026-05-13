@@ -82,9 +82,10 @@ export function MessageInput({
             onKeyDown={handleKeyDown}
             onInput={handleInput}
             placeholder="Type an encrypted message..."
-            disabled={disabled}
+            disabled={!!disabled}
             rows={1}
             className="w-full resize-none rounded-xl border bg-muted/30 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50"
+            suppressHydrationWarning
           />
           <div className="absolute right-3 bottom-3 flex items-center gap-1 text-muted-foreground">
             <Shield className="h-3 w-3 text-green-500" />

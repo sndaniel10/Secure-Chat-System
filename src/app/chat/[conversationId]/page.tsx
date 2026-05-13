@@ -15,7 +15,15 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useSocket } from "@/socket/socket-provider";
 import { EncryptedPacket, HPOWirePacket } from "@/socket/events";
-import { Shield, LogOut, Lock, ArrowLeft } from "lucide-react";
+import { Shield, LogOut, Lock, ArrowLeft, MoreVertical, Download } from "lucide-react";
+import { useInstall } from "@/components/pwa/install-provider";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   ratchetEncrypt,
   ratchetDecrypt,
@@ -104,6 +112,7 @@ interface ConversationData {
 
 export default function ConversationPage() {
   const { user: session_user, logout, getPassword } = useAuth();
+  const { installable, install } = useInstall();
   const router = useRouter();
   const params = useParams();
   const conversationId = params?.conversationId as string;
@@ -501,14 +510,31 @@ export default function ConversationPage() {
           </div>
           <div className="flex items-center gap-1">
             <NewChatDialog />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9"
-              onClick={logout}
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                {installable && (
+                  <>
+                    <DropdownMenuItem onClick={install}>
+                      <Download className="mr-2 h-4 w-4" />
+                      Install App
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                <DropdownMenuItem
+                  onClick={logout}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign Out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         <Separator />

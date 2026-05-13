@@ -89,7 +89,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       if (document.hasFocus()) return; // Only show when tab is not focused
       new Notification(title, {
         body,
-        icon: "/icons/icon.svg",
+        icon: "/icon.png",
         tag: url,
         data: { url },
       });

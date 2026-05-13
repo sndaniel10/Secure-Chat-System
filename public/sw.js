@@ -1,5 +1,5 @@
-const CACHE = "hpo-chat-v1";
-const PRECACHE = ["/", "/chat", "/login", "/icons/icon.svg"];
+const CACHE = "hpo-chat-v2";
+const PRECACHE = ["/", "/chat", "/login", "/icon.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -49,8 +49,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title || "HPO Chat", {
       body: data.body || "New message",
-      icon: "/icons/icon.svg",
-      badge: "/icons/icon.svg",
+      icon: "/icon.png",
+      badge: "/icon.png",
       data: { url: data.url || "/chat" },
       vibrate: [200, 100, 200],
       tag: data.tag || "hpo-message",
