@@ -1,55 +1,70 @@
 # setup-https.ps1 — Generate locally-trusted TLS certs for dev HTTPS.
 # Run once per machine: npm run setup-https
-#
-# Requires mkcert. If not installed, this script will try to install it
-# via winget (Windows 10+). Chocolatey and Scoop are tried as fallbacks.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$projectRoot = Split-Path $PSScriptRoot -Parent
 
 function Find-Mkcert {
     try { $null = Get-Command mkcert -ErrorAction Stop; return $true } catch { return $false }
 }
 
+function Download-Mkcert {
+    Write-Host "  Downloading mkcert from GitHub..." -ForegroundColor Cyan
+    try {
+        $release = Invoke-RestMethod "https://api.github.com/repos/FiloSottile/mkcert/releases/latest"
+        $asset = $release.assets | Where-Object { $_.name -like "*windows-amd64*" } | Select-Object -First 1
+        if (-not $asset) {
+            Write-Host "  Could not find Windows release asset." -ForegroundColor Red
+            return $null
+        }
+        $dest = Join-Path $env:TEMP "mkcert.exe"
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing
+        return $dest
+    } catch {
+        Write-Host ("  Download failed: " + $_.Exception.Message) -ForegroundColor Red
+        return $null
+    }
+}
+
+$mkcertCmd = "mkcert"
+
 if (-not (Find-Mkcert)) {
-    Write-Host "mkcert not found -- attempting install..." -ForegroundColor Yellow
+    Write-Host "mkcert not found -- trying to install..." -ForegroundColor Yellow
 
     $installed = $false
 
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host "  Installing via winget..."
-        winget install --id FiloSottile.mkcert --exact --accept-source-agreements --accept-package-agreements
-        $installed = Find-Mkcert
+        Write-Host "  Trying winget..."
+        try {
+            winget install --id FiloSottile.mkcert --exact --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+            $installed = Find-Mkcert
+        } catch { }
     }
 
-    if (-not $installed -and (Get-Command choco -ErrorAction SilentlyContinue)) {
-        Write-Host "  Installing via Chocolatey..."
-        choco install mkcert -y
-        $installed = Find-Mkcert
-    }
-
-    if (-not $installed -and (Get-Command scoop -ErrorAction SilentlyContinue)) {
-        Write-Host "  Installing via Scoop..."
-        scoop install mkcert
-        $installed = Find-Mkcert
+    if (-not $installed) {
+        $exe = Download-Mkcert
+        if ($exe -and (Test-Path $exe)) {
+            $mkcertCmd = $exe
+            $installed = $true
+            Write-Host "  Downloaded to $exe" -ForegroundColor Green
+        }
     }
 
     if (-not $installed) {
         Write-Host ""
-        Write-Host "Could not install mkcert automatically." -ForegroundColor Red
-        Write-Host "Install it manually from https://github.com/FiloSottile/mkcert/releases" -ForegroundColor Red
-        Write-Host "then re-run: npm run setup-https" -ForegroundColor Red
+        Write-Host "Could not obtain mkcert automatically." -ForegroundColor Red
+        Write-Host "Download it manually from: https://github.com/FiloSottile/mkcert/releases" -ForegroundColor Red
+        Write-Host "Place mkcert.exe somewhere on your PATH, then re-run: npm run setup-https" -ForegroundColor Red
         exit 1
     }
-
-    $machinePath = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
-    $userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
-    $env:PATH = $machinePath + ";" + $userPath
 }
 
 Write-Host ""
-Write-Host "Installing local CA (you may see a UAC prompt)..." -ForegroundColor Cyan
-mkcert -install
+Write-Host "Installing local CA into browser/system trust stores..." -ForegroundColor Cyan
+Write-Host "(A UAC prompt may appear -- click Yes to allow.)" -ForegroundColor Yellow
+& $mkcertCmd -install
 
 $localIPs = @("localhost", "127.0.0.1")
 $nets = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
@@ -61,7 +76,6 @@ foreach ($net in $nets) {
 Write-Host ""
 Write-Host ("Generating certificates for: " + ($localIPs -join ", ")) -ForegroundColor Cyan
 
-$projectRoot = Split-Path $PSScriptRoot -Parent
 $certsDir = Join-Path $projectRoot "certs"
 if (-not (Test-Path $certsDir)) {
     New-Item -ItemType Directory -Path $certsDir | Out-Null
@@ -69,7 +83,7 @@ if (-not (Test-Path $certsDir)) {
 
 Push-Location $certsDir
 try {
-    & mkcert @localIPs
+    & $mkcertCmd @localIPs
 } finally {
     Pop-Location
 }
