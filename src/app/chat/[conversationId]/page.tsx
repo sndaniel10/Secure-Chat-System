@@ -188,12 +188,16 @@ export default function ConversationPage() {
           // No local keys — try to restore from the server vault
           if (password) {
             const { restoreFromVault } = await import("@/crypto/key-manager");
-            const restored = await restoreFromVault(password);
-            if (!restored) {
-              console.warn("[E2EE] Vault restore failed — E2EE unavailable on this origin.");
+            const result = await restoreFromVault(password);
+            if (result === "not_found") {
+              console.warn("[E2EE] No vault on server yet. Log in on your primary device to enable cross-device E2EE.");
+            } else if (result === "decrypt_failed") {
+              console.warn("[E2EE] Vault decryption failed — password may not match the one used during registration.");
+            } else if (result === "fetch_failed") {
+              console.warn("[E2EE] Could not reach vault API.");
             }
           } else {
-            console.warn("[E2EE] No local identity keys and no password in memory — E2EE unavailable.");
+            console.warn("[E2EE] No password in memory — log in (not auto-login) to restore E2EE on this device.");
           }
         } else if (password) {
           // Keys exist locally — silently upload vault if this user has none yet
@@ -454,9 +458,17 @@ export default function ConversationPage() {
           ratchetHeader = "e2ee";
           encrypted = true;
         }
-        // No identity key on this device → send as plaintext (silent fallback)
       } catch (error) {
-        console.error("[E2EE] Encryption error, sending plaintext:", error);
+        console.error("[E2EE] Encryption error:", error);
+        setSendError("Failed to encrypt message. Please try again.");
+        setTimeout(() => setSendError(null), 4000);
+        return;
+      }
+
+      if (!encrypted) {
+        setSendError("E2EE unavailable — message not sent. Re-login to restore your encryption keys.");
+        setTimeout(() => setSendError(null), 5000);
+        return;
       }
 
       const packet: EncryptedPacket = {

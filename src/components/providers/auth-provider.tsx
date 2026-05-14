@@ -40,6 +40,7 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 const PUBLIC_PATHS = ["/login", "/register"];
+const SESSION_PW_KEY = "hpo_session_pw";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -56,6 +57,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (storedToken && storedUser) {
       setTokenState(storedToken);
       setUser(storedUser);
+      const sessionPw = sessionStorage.getItem(SESSION_PW_KEY);
+      if (sessionPw) passwordRef.current = sessionPw;
     }
     setLoading(false);
   }, []);
@@ -87,6 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const data = await res.json();
         passwordRef.current = password;
+        sessionStorage.setItem(SESSION_PW_KEY, password);
         setToken(data.access_token);
         setTokenState(data.access_token);
 
@@ -98,6 +102,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStoredUser(authUser);
         setUser(authUser);
 
+        // Silently ensure vault is backed up whenever the user logs in.
+        // This covers users who registered before vault support was added.
+        const userId = data.user.id;
+        (async () => {
+          try {
+            const { initCryptoStore } = await import("@/crypto/store");
+            const { ensureVaultSynced } = await import("@/crypto/key-manager");
+            initCryptoStore(userId);
+            await ensureVaultSynced(password);
+          } catch {}
+        })();
+
         return {};
       } catch {
         return { error: "Network error" };
@@ -108,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     passwordRef.current = null;
+    sessionStorage.removeItem(SESSION_PW_KEY);
     removeToken();
     setTokenState(null);
     setUser(null);

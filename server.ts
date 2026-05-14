@@ -1,5 +1,8 @@
 import "dotenv/config";
-import { createServer } from "node:http";
+import { createServer as createHttp } from "node:http";
+import { createServer as createHttps } from "node:https";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { networkInterfaces } from "node:os";
 import next from "next";
 import { WebSocketServer } from "ws";
@@ -14,7 +17,7 @@ const hostname = process.env.HOSTNAME ?? "0.0.0.0";
 async function findAvailablePort(start: number, host: string): Promise<number> {
   for (let p = start; p < start + 20; p += 1) {
     const free = await new Promise<boolean>((resolve) => {
-      const probe = createServer();
+      const probe = createHttp();
       probe.once("error", (err: NodeJS.ErrnoException) => {
         probe.close();
         resolve(err.code !== "EADDRINUSE");
@@ -40,15 +43,22 @@ async function main() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nextUpgrade = (app as any).getUpgradeHandler?.();
 
-  const httpServer = createServer((req, res) => {
+  const certFile = join(process.cwd(), "certs", "cert.pem");
+  const keyFile  = join(process.cwd(), "certs", "key.pem");
+  const useHttps = existsSync(certFile) && existsSync(keyFile);
+
+  const handler = (req: Parameters<typeof handle>[0], res: Parameters<typeof handle>[1]) => {
     if (req.url === "/ws" || req.url?.startsWith("/ws?")) {
-      // WS upgrades are handled below; reject HTTP requests on /ws
       res.writeHead(426, { "Content-Type": "text/plain" });
       res.end("Upgrade Required");
       return;
     }
     handle(req, res);
-  });
+  };
+
+  const httpServer = useHttps
+    ? createHttps({ cert: readFileSync(certFile), key: readFileSync(keyFile) }, handler)
+    : createHttp(handler);
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -77,9 +87,10 @@ async function main() {
       .flat()
       .find((n) => n?.family === "IPv4" && !n.internal)?.address;
 
-    console.log(`\n  ▲ Next.js\n`);
-    console.log(`  - Local:    http://localhost:${port}`);
-    if (networkIp) console.log(`  - Network:  http://${networkIp}:${port}`);
+    const proto = useHttps ? "https" : "http";
+    console.log(`\n  ▲ Next.js${useHttps ? " (HTTPS)" : ""}\n`);
+    console.log(`  - Local:    ${proto}://localhost:${port}`);
+    if (networkIp) console.log(`  - Network:  ${proto}://${networkIp}:${port}`);
     console.log();
     startCrt();
   });

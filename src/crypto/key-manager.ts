@@ -82,23 +82,23 @@ export async function ensureVaultSynced(password: string): Promise<void> {
   }
 }
 
+export type VaultRestoreResult = "ok" | "not_found" | "decrypt_failed" | "fetch_failed";
+
 /**
  * Restore private keys from the server vault on a new origin.
- * Returns true if keys were successfully restored.
  */
-export async function restoreFromVault(password: string): Promise<boolean> {
+export async function restoreFromVault(password: string): Promise<VaultRestoreResult> {
   try {
     const res = await authFetch("/api/keys/vault");
-    if (!res.ok) return false;
+    if (!res.ok) return "fetch_failed";
     const { vault } = await res.json();
-    if (!vault) return false;
+    if (!vault) return "not_found";
 
     const keyVault = await decryptVault(vault, password);
     await restoreFromKeyVault(keyVault);
-    return true;
-  } catch (error) {
-    console.error("[KeyManager] Failed to restore vault:", error);
-    return false;
+    return "ok";
+  } catch {
+    return "decrypt_failed";
   }
 }
 
